@@ -124,84 +124,6 @@ const ACTIVITIES: ActivityDefinition[] = [
 const ACTIVITY_LOOKUP = Object.fromEntries(
   ACTIVITIES.map((activity) => [activity.id, activity])
 ) as Record<ActivityId, ActivityDefinition>;
-const LOCATIONS: Record<LocationId, Location> = {
-  home: {
-    id: "home",
-    name: "Tiny Apartment",
-    description: "Rest, recover, and plan your next grind.",
-  },
-  downtown: {
-    id: "downtown",
-    name: "Downtown",
-    description: "Jobs, shops, and the hustle of city life.",
-  },
-  gym: {
-    id: "gym",
-    name: "Gym",
-    description: "Push your limits to build strength and stamina.",
-  },
-  park: {
-    id: "park",
-    name: "City Park",
-    description: "Low-pressure exploration and casual encounters.",
-  },
-  work: {
-    id: "work",
-    name: "Worksite",
-    description: "Clock in and trade time for cash.",
-  },
-};
-
-const ACTIVITIES: Record<
-  ActivityId,
-  {
-    id: ActivityId;
-    name: string;
-    minutes: number;
-    energyCost: number;
-    moneyDelta: number;
-    location: LocationId;
-    attributeGain?: keyof PlayerState["attributes"];
-    skillGain?: keyof PlayerState["skills"];
-  }
-> = {
-  rest: {
-    id: "rest",
-    name: "Rest",
-    minutes: 60,
-    energyCost: -20,
-    moneyDelta: 0,
-    location: "home",
-  },
-  work: {
-    id: "work",
-    name: "Work Shift",
-    minutes: 120,
-    energyCost: 20,
-    moneyDelta: 45,
-    location: "work",
-    skillGain: "labor",
-  },
-  train: {
-    id: "train",
-    name: "Training",
-    minutes: 90,
-    energyCost: 18,
-    moneyDelta: -10,
-    location: "gym",
-    attributeGain: "strength",
-    skillGain: "fitness",
-  },
-  explore: {
-    id: "explore",
-    name: "Explore",
-    minutes: 45,
-    energyCost: 10,
-    moneyDelta: 0,
-    location: "downtown",
-    skillGain: "hustle",
-  },
-};
 
 const clamp = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max);
@@ -248,7 +170,6 @@ const createGameState = (): GameState => ({
   version: STATE_VERSION,
   player: createPlayerState(),
   location: LOCATION_LOOKUP.home,
-  location: LOCATIONS.home,
   time: createTimeState(8 * 60),
   log: [],
 });
@@ -263,6 +184,13 @@ const createLogEntry = (message: string, type: LogType): LogEntry => ({
 let state: GameState = createGameState();
 
 export const getState = (): GameState => state;
+
+export const getLocations = (): Location[] => [...LOCATIONS];
+
+export const getActivitiesForLocation = (
+  locationId: LocationId
+): ActivityDefinition[] =>
+  ACTIVITIES.filter((activity) => activity.locationId === locationId);
 
 const calculateNeedsAfterMinutes = (
   needs: GameState["player"]["needs"],
@@ -317,6 +245,7 @@ const clampNeeds = (
   hygiene: clamp(needs.hygiene, 0, 100),
   stress: clamp(needs.stress, 0, 100),
   health: clamp(needs.health, 0, 100),
+  morale: clamp(needs.morale, 0, 100),
 });
 
 const applyNeedDeltas = (
@@ -333,6 +262,7 @@ const applyNeedDeltas = (
     hygiene: needs.hygiene + (deltas.hygiene ?? 0),
     stress: needs.stress + (deltas.stress ?? 0),
     health: needs.health + (deltas.health ?? 0),
+    morale: needs.morale + (deltas.morale ?? 0),
   });
 };
 
@@ -349,9 +279,7 @@ const hasRequirement = (
     .map(([key, value]) => `${key} ${value}`);
 };
 
-const checkActivityRequirements = (
-  activity: ActivityDefinition
-): string[] => {
+const checkActivityRequirements = (activity: ActivityDefinition): string[] => {
   const unmetAttributes = hasRequirement(
     state.player.attributes,
     activity.requirements?.minAttributes
@@ -434,18 +362,12 @@ export const advanceTime = (minutes: number): GameState => {
   if (state.time.day > previousDay) {
     addLog(`Day ${state.time.day} begins.`, "info");
   }
-  const totalMinutes = Math.max(0, state.time.totalMinutes + minutes);
-  state = {
-    ...state,
-    time: createTimeState(totalMinutes),
-  };
   saveGame();
   return state;
 };
 
 export const performActivity = (activityId: ActivityId): GameState => {
   const activity = ACTIVITY_LOOKUP[activityId];
-  const activity = ACTIVITIES[activityId];
   if (!activity) {
     addLog(`Unknown activity: ${activityId}`, "warning");
     return state;
@@ -485,35 +407,6 @@ export const performActivity = (activityId: ActivityId): GameState => {
       ...state.player,
       money: Math.max(0, state.player.money + (activity.moneyDelta ?? 0)),
       needs: nextNeeds,
-  const nextEnergy = clamp(
-    state.player.needs.energy - activity.energyCost,
-    0,
-    100
-  );
-  const nextHunger = clamp(state.player.needs.hunger + 8, 0, 100);
-  const nextMorale = clamp(state.player.needs.morale + 2, 0, 100);
-
-  const updatedAttributes = { ...state.player.attributes };
-  if (activity.attributeGain) {
-    updatedAttributes[activity.attributeGain] += 1;
-  }
-
-  const updatedSkills = { ...state.player.skills };
-  if (activity.skillGain) {
-    updatedSkills[activity.skillGain] += 1;
-  }
-
-  state = {
-    ...state,
-    location: LOCATIONS[activity.location],
-    player: {
-      ...state.player,
-      money: Math.max(0, state.player.money + activity.moneyDelta),
-      needs: {
-        energy: nextEnergy,
-        hunger: nextHunger,
-        morale: nextMorale,
-      },
       attributes: updatedAttributes,
       skills: updatedSkills,
     },
@@ -541,6 +434,7 @@ export const runTimeSystemChecks = (): string[] => {
     hygiene: 50,
     stress: 50,
     health: 50,
+    morale: 50,
   };
 
   const afterHour = calculateNeedsAfterMinutes(baseline, 60).needs;
@@ -563,6 +457,7 @@ export const runTimeSystemChecks = (): string[] => {
     hygiene: 10,
     stress: 90,
     health: 50,
+    morale: 50,
   };
   const afterCritical = calculateNeedsAfterMinutes(criticalNeeds, 60).needs;
   if (afterCritical.health !== 49) {
@@ -571,3 +466,5 @@ export const runTimeSystemChecks = (): string[] => {
 
   return failures;
 };
+
+export type { ActivityDefinition };
