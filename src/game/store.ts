@@ -1,5 +1,7 @@
 import type {
   ActivityId,
+  BlackjackResult,
+  BoxingMatchResult,
   GameState,
   Location,
   LocationId,
@@ -28,6 +30,11 @@ const LOCATIONS: Location[] = [
     name: "Job District",
     description: "A busy district packed with shifts and paychecks.",
   },
+  {
+    id: "bar",
+    name: "Bar",
+    description: "Loud music, risky bets, and underground fights.",
+  },
 ];
 
 const LOCATION_LOOKUP = Object.fromEntries(
@@ -47,6 +54,7 @@ type ActivityDefinition = {
     minAttributes?: Partial<PlayerState["attributes"]>;
     minSkills?: Partial<PlayerState["skills"]>;
   };
+  kind?: "standard" | "minigame";
 };
 
 const ACTIVITIES: ActivityDefinition[] = [
@@ -119,6 +127,20 @@ const ACTIVITIES: ActivityDefinition[] = [
       minAttributes: { intelligence: 5 },
     },
   },
+  {
+    id: "boxing-match",
+    name: "Boxing Match",
+    minutes: 60,
+    locationId: "bar",
+    kind: "minigame",
+  },
+  {
+    id: "blackjack",
+    name: "Gambling: Blackjack-lite",
+    minutes: 45,
+    locationId: "bar",
+    kind: "minigame",
+  },
 ];
 
 const ACTIVITY_LOOKUP = Object.fromEntries(
@@ -140,6 +162,7 @@ const createTimeState = (totalMinutes: number): TimeState => {
 
 const createPlayerState = (): PlayerState => ({
   money: 25,
+  reputation: 0,
   needs: {
     energy: 80,
     hunger: 60,
@@ -153,17 +176,20 @@ const createPlayerState = (): PlayerState => ({
     agility: 5,
     charisma: 5,
     intelligence: 5,
+    luck: 3,
   },
   skills: {
     labor: 1,
     fitness: 1,
     hustle: 1,
     office: 0,
+    combat: 1,
   },
   inventory: {
     capacity: 12,
     items: [],
   },
+  statusEffects: {},
 });
 
 const createGameState = (): GameState => ({
@@ -248,16 +274,28 @@ const clampNeeds = (
   morale: clamp(needs.morale, 0, 100),
 });
 
+const isPlayerInjured = (): boolean => {
+  const injuryUntilDay = state.player.statusEffects.injuryUntilDay;
+  return Boolean(injuryUntilDay && state.time.day <= injuryUntilDay);
+};
+
 const applyNeedDeltas = (
   needs: GameState["player"]["needs"],
-  deltas?: Partial<GameState["player"]["needs"]>
+  deltas?: Partial<GameState["player"]["needs"]>,
+  options?: { injured?: boolean }
 ): GameState["player"]["needs"] => {
   if (!deltas) {
     return needs;
   }
 
+  const energyDelta = deltas.energy ?? 0;
+  const adjustedEnergyDelta =
+    energyDelta > 0 && options?.injured
+      ? Math.max(1, Math.floor(energyDelta * 0.5))
+      : energyDelta;
+
   return clampNeeds({
-    energy: needs.energy + (deltas.energy ?? 0),
+    energy: needs.energy + adjustedEnergyDelta,
     hunger: needs.hunger + (deltas.hunger ?? 0),
     hygiene: needs.hygiene + (deltas.hygiene ?? 0),
     stress: needs.stress + (deltas.stress ?? 0),
@@ -311,6 +349,18 @@ const getCriticalNeeds = (
   return critical;
 };
 
+const getPlayerLevel = (): number => {
+  const attributes = Object.values(state.player.attributes).reduce(
+    (sum, value) => sum + value,
+    0
+  );
+  const skills = Object.values(state.player.skills).reduce(
+    (sum, value) => sum + value,
+    0
+  );
+  return Math.max(1, Math.floor((attributes + skills) / 8));
+};
+
 export const startNewGame = (): GameState => {
   state = createGameState();
   addLog("A new grind begins.", "info");
@@ -361,6 +411,20 @@ export const advanceTime = (minutes: number): GameState => {
   });
   if (state.time.day > previousDay) {
     addLog(`Day ${state.time.day} begins.`, "info");
+    const injuryUntilDay = state.player.statusEffects.injuryUntilDay;
+    if (injuryUntilDay && state.time.day > injuryUntilDay) {
+      state = {
+        ...state,
+        player: {
+          ...state.player,
+          statusEffects: {
+            ...state.player.statusEffects,
+            injuryUntilDay: undefined,
+          },
+        },
+      };
+      addLog("Your injury heals and energy recovery returns to normal.", "info");
+    }
   }
   saveGame();
   return state;
@@ -373,12 +437,15 @@ export const performActivity = (activityId: ActivityId): GameState => {
     return state;
   }
 
+  if (activity.kind === "minigame") {
+    addLog(`Started ${activity.name}.`, "info");
+    return state;
+  }
+
   const unmetRequirements = checkActivityRequirements(activity);
   if (unmetRequirements.length > 0) {
     addLog(
-      `Requirements not met for ${activity.name}: ${unmetRequirements.join(
-        ", "
-      )}.`,
+      `Requirements not met for ${activity.name}: ${unmetRequirements.join(", ")}.`,
       "warning"
     );
     return state;
@@ -398,7 +465,9 @@ export const performActivity = (activityId: ActivityId): GameState => {
     });
   }
 
-  const nextNeeds = applyNeedDeltas(state.player.needs, activity.needsDelta);
+  const nextNeeds = applyNeedDeltas(state.player.needs, activity.needsDelta, {
+    injured: isPlayerInjured(),
+  });
 
   state = {
     ...state,
@@ -416,6 +485,143 @@ export const performActivity = (activityId: ActivityId): GameState => {
   addLog(`${activity.name} completed.`, "event");
   saveGame();
   return state;
+};
+
+export const resolveBoxingMatch = (): BoxingMatchResult => {
+  const playerPower =
+    state.player.attributes.strength +
+    state.player.skills.combat +
+    Math.floor(Math.random() * (state.player.attributes.luck + 1));
+  const level = getPlayerLevel();
+  const opponentPower =
+    level * 6 + Math.floor(Math.random() * Math.max(2, level * 2));
+  const winChance = playerPower / (playerPower + opponentPower);
+  const didWin = Math.random() < winChance;
+  const rewardMultiplier = clamp(1.6 - winChance, 0.6, 1.6);
+
+  const moneyReward = didWin ? Math.round(40 + 60 * rewardMultiplier) : 0;
+  const reputationReward = didWin ? Math.round(2 + 4 * rewardMultiplier) : 0;
+  const combatXp = didWin ? Math.round(2 + 3 * rewardMultiplier) : 1;
+
+  const injuryRoll = !didWin && Math.random() < 0.35;
+  const injuryUntilDay = injuryRoll ? state.time.day + 1 : undefined;
+
+  state = {
+    ...state,
+    location: LOCATION_LOOKUP.bar,
+    player: {
+      ...state.player,
+      money: Math.max(0, state.player.money + moneyReward),
+      reputation: state.player.reputation + reputationReward,
+      skills: {
+        ...state.player.skills,
+        combat: state.player.skills.combat + combatXp,
+      },
+      statusEffects: {
+        ...state.player.statusEffects,
+        injuryUntilDay: injuryUntilDay ?? state.player.statusEffects.injuryUntilDay,
+      },
+    },
+  };
+
+  advanceTime(ACTIVITY_LOOKUP["boxing-match"].minutes);
+
+  if (didWin) {
+    addLog(
+      `Boxing win! Earned $${moneyReward} and ${reputationReward} rep.`,
+      "reward"
+    );
+  } else {
+    addLog("Boxing loss. You still gain some combat experience.", "warning");
+  }
+
+  if (injuryRoll) {
+    addLog("You picked up an injury. Energy recovery is slower today.", "warning");
+  }
+
+  saveGame();
+
+  return {
+    result: didWin ? "win" : "loss",
+    winChance,
+    playerPower,
+    opponentPower,
+    reward: {
+      money: moneyReward,
+      reputation: reputationReward,
+      combatXp,
+    },
+    injury: injuryRoll,
+  };
+};
+
+export const drawBlackjackCard = (): number =>
+  Math.floor(Math.random() * 11) + 1;
+
+export const calculateBlackjackTotal = (hand: number[]): number =>
+  hand.reduce((sum, card) => sum + card, 0);
+
+export const resolveBlackjackHand = (
+  bet: number,
+  playerHand: number[]
+): BlackjackResult => {
+  const safeBet = Math.max(1, Math.min(bet, state.player.money));
+  let dealerHand = [drawBlackjackCard(), drawBlackjackCard()];
+  let dealerTotal = calculateBlackjackTotal(dealerHand);
+  const luckFactor = clamp(state.player.attributes.luck * 0.01, 0, 0.08);
+
+  while (dealerTotal < 17) {
+    dealerHand = [...dealerHand, drawBlackjackCard()];
+    dealerTotal = calculateBlackjackTotal(dealerHand);
+  }
+
+  if (dealerTotal >= 17 && dealerTotal <= 20 && Math.random() < luckFactor) {
+    dealerHand = [...dealerHand, drawBlackjackCard()];
+    dealerTotal = calculateBlackjackTotal(dealerHand);
+  }
+
+  const playerTotal = calculateBlackjackTotal(playerHand);
+  let result: BlackjackResult["result"] = "push";
+  if (playerTotal > 21) {
+    result = "loss";
+  } else if (dealerTotal > 21 || playerTotal > dealerTotal) {
+    result = "win";
+  } else if (playerTotal < dealerTotal) {
+    result = "loss";
+  }
+
+  const payout =
+    result === "win" ? safeBet : result === "loss" ? -safeBet : 0;
+
+  state = {
+    ...state,
+    location: LOCATION_LOOKUP.bar,
+    player: {
+      ...state.player,
+      money: Math.max(0, state.player.money + payout),
+    },
+  };
+
+  advanceTime(ACTIVITY_LOOKUP.blackjack.minutes);
+
+  if (result === "win") {
+    addLog(`Blackjack win! You gain $${safeBet}.`, "reward");
+  } else if (result === "loss") {
+    addLog(`Blackjack loss. You lose $${safeBet}.`, "warning");
+  } else {
+    addLog("Blackjack push. Your bet is returned.", "info");
+  }
+
+  saveGame();
+
+  return {
+    result,
+    bet: safeBet,
+    playerTotal,
+    dealerTotal,
+    payout,
+    dealerHand,
+  };
 };
 
 export const addLog = (message: string, type: LogType): void => {
