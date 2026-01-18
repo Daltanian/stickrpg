@@ -1,12 +1,23 @@
-export type LocationId = "home" | "downtown" | "gym" | "park" | "work";
+export type LocationId = "home" | "school" | "job-district";
 
-export type ActivityId = "rest" | "work" | "train" | "explore";
+export type ActivityId =
+  | "sleep"
+  | "shower"
+  | "cook-meal"
+  | "attend-class"
+  | "study"
+  | "work-dishwasher"
+  | "work-retail"
+  | "work-intern";
 
 export type LogType = "info" | "event" | "warning" | "reward";
 
 export interface Needs {
   energy: number;
   hunger: number;
+  hygiene: number;
+  stress: number;
+  health: number;
   morale: number;
 }
 
@@ -21,6 +32,7 @@ export interface Skills {
   labor: number;
   fitness: number;
   hustle: number;
+  office: number;
 }
 
 export interface InventoryItem {
