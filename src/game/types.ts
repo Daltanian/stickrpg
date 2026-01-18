@@ -1,4 +1,4 @@
-export type LocationId = "home" | "school" | "job-district";
+export type LocationId = "home" | "school" | "job-district" | "bar";
 
 export type ActivityId =
   | "sleep"
@@ -8,7 +8,9 @@ export type ActivityId =
   | "study"
   | "work-dishwasher"
   | "work-retail"
-  | "work-intern";
+  | "work-intern"
+  | "boxing-match"
+  | "blackjack";
 
 export type LogType = "info" | "event" | "warning" | "reward";
 
@@ -26,6 +28,7 @@ export interface Attributes {
   agility: number;
   charisma: number;
   intelligence: number;
+  luck: number;
 }
 
 export interface Skills {
@@ -33,6 +36,7 @@ export interface Skills {
   fitness: number;
   hustle: number;
   office: number;
+  combat: number;
 }
 
 export interface InventoryItem {
@@ -46,12 +50,18 @@ export interface Inventory {
   items: InventoryItem[];
 }
 
+export interface StatusEffects {
+  injuryUntilDay?: number;
+}
+
 export interface PlayerState {
   money: number;
+  reputation: number;
   needs: Needs;
   attributes: Attributes;
   skills: Skills;
   inventory: Inventory;
+  statusEffects: StatusEffects;
 }
 
 export interface Location {
@@ -80,4 +90,26 @@ export interface GameState {
   location: Location;
   time: TimeState;
   log: LogEntry[];
+}
+
+export interface BoxingMatchResult {
+  result: "win" | "loss";
+  winChance: number;
+  playerPower: number;
+  opponentPower: number;
+  reward: {
+    money: number;
+    reputation: number;
+    combatXp: number;
+  };
+  injury: boolean;
+}
+
+export interface BlackjackResult {
+  result: "win" | "loss" | "push";
+  bet: number;
+  playerTotal: number;
+  dealerTotal: number;
+  payout: number;
+  dealerHand: number[];
 }
