@@ -18,6 +18,7 @@ export interface Needs {
   hygiene: number;
   stress: number;
   health: number;
+  morale: number;
 }
 
 export interface Attributes {
